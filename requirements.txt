@@ -1,0 +1,11 @@
+streamlit
+opencv-python
+tensorflow
+numpy
+pillow
+fpdf
+seaborn
+matplotlib
+streamlit-webrtc
+av
+pandas
