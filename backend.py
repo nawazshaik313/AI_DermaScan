@@ -11,12 +11,17 @@ LOG_FILE = "inference_logs.csv"
 
 class DermalScanBackend:
     def __init__(self, model_path, prototxt, weights):
-        """Initialize the AI models."""
         try:
+            # 1. Load Skin Analysis Model
             self.model = tf.keras.models.load_model(model_path, compile=False)
+            
+            # 2. Load Face Detector (OpenCV SSD)
+            # This uses the files in your 'face_detector' folder
+            # It is robust and does NOT conflict with TensorFlow
             self.face_net = cv2.dnn.readNetFromCaffe(prototxt, weights)
+            
             self._warmup()
-            print("✅ Backend: System initialized successfully.")
+            print("✅ Backend: System initialized successfully (OpenCV Enabled).")
         except Exception as e:
             print(f"❌ Backend Error: {e}")
             raise RuntimeError(f"Failed to load models: {e}")
@@ -26,23 +31,19 @@ class DermalScanBackend:
         dummy = np.zeros((1, 224, 224, 3), dtype=np.float32)
         self.model.predict(dummy, verbose=0)
 
-    def detect_and_predict(self, img_np, conf_threshold=0.6, enable_logging=True):
-        """
-        Main Pipeline: Face Detection -> Preprocessing -> Inference -> Logging
-        """
+    def detect_and_predict(self, img_np, conf_threshold=0.5, enable_logging=True):
         h, w = img_np.shape[:2]
         
-        # 1. Face Detection
-        blob = cv2.dnn.blobFromImage(
-            cv2.resize(img_np, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0)
-        )
+        # 1. Face Detection (OpenCV DNN)
+        blob = cv2.dnn.blobFromImage(cv2.resize(img_np, (300, 300)), 1.0, 
+                                   (300, 300), (104.0, 177.0, 123.0))
         self.face_net.setInput(blob)
         detections = self.face_net.forward()
 
+        # Find best face
         best_idx = -1
         max_conf = 0
 
-        # Find the most confident face
         for i in range(detections.shape[2]):
             conf = detections[0, 0, i, 2]
             if conf > conf_threshold and conf > max_conf:
@@ -51,14 +52,20 @@ class DermalScanBackend:
 
         if best_idx < 0:
             return {"found": False}
-
+        
         # 2. ROI Extraction
         box = detections[0, 0, best_idx, 3:7] * np.array([w, h, w, h])
         x1, y1, x2, y2 = box.astype("int")
+
+        # Fix Coordinates
         x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w - 1, x2), min(h - 1, y2)
+        x2, y2 = min(w, x1 + width if 'width' in locals() else x2), min(h, y2)
+        
+        # Double check dimensions after fixing
+        if x2 <= x1 or y2 <= y1: return {"found": False}
 
         face_roi = img_np[y1:y2, x1:x2]
+        
         if face_roi.size == 0:
             return {"found": False}
 
@@ -69,19 +76,17 @@ class DermalScanBackend:
         preds = self.model.predict(face_input, verbose=0)[0]
         preds = preds.astype(float)
         
-        # Logic for primary class
         sorted_idx = np.argsort(preds)[::-1]
         top1 = sorted_idx[0]
         
         label = CLASS_NAMES[top1]
         confidence = preds[top1] * 100
 
-        # 4. Texture Analysis (Math)
+        # 4. Texture Analysis
         gray_face = cv2.cvtColor(face_roi, cv2.COLOR_RGB2GRAY)
         variance = cv2.Laplacian(gray_face, cv2.CV_64F).var()
         smoothness = max(0, min(100, 100 - (variance / 15)))
 
-        # 5. Logging (Optional for Live Video)
         if enable_logging:
             self.log_prediction(label, confidence, smoothness)
 
@@ -96,7 +101,6 @@ class DermalScanBackend:
         }
 
     def log_prediction(self, label, conf, smooth):
-        """Saves scan data to CSV."""
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         if not os.path.exists(LOG_FILE):
@@ -109,7 +113,6 @@ class DermalScanBackend:
             writer.writerow([timestamp, label, f"{conf:.2f}", f"{smooth:.2f}"])
 
     def get_clinical_advice(self, condition):
-        """Returns medical advice based on detection."""
         advice = {
             "Clear Skin": ["✅ Maintain hydration", "🛡️ Apply SPF 50 regularly", "💧 Use Hyaluronic Acid"],
             "Dark Spots": ["🧪 Vitamin C Serum (AM)", "🌙 Niacinamide (PM)", "🚫 Avoid direct sun"],
