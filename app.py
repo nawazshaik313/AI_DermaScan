@@ -436,5 +436,4 @@ if img_np is not None:
                         e3.download_button("📊 CSV Logs", f, "logs.csv", "text/csv", use_container_width=True)
                         
             else:
->>>>>>> 46dc3471f383589b98ed4847bfbe1a9151001303
                 st.warning("⚠️ No face detected in the image.")
