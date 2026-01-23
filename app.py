@@ -9,7 +9,7 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 from fpdf import FPDF
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
 
 # Import Backend
@@ -79,14 +79,12 @@ st.markdown("""
     }
 
     /* 5. VISIBILITY FIX: FILE UPLOADER & CAMERA */
-    /* Container Styling */
     [data-testid='stFileUploader'], [data-testid='stCameraInput'] {
-        background-color: rgba(255, 255, 255, 0.95); /* White background for contrast */
+        background-color: rgba(255, 255, 255, 0.95);
         border: 2px dashed #00d2ff;
         border-radius: 15px;
         padding: 20px;
     }
-    /* Text Inside Uploader - Force Black */
     [data-testid='stFileUploader'] section > div,
     [data-testid='stFileUploader'] label,
     [data-testid='stFileUploader'] span,
@@ -95,14 +93,12 @@ st.markdown("""
     [data-testid='stCameraInput'] span {
         color: #000000 !important;
     }
-    /* Buttons Inside */
     [data-testid='stFileUploader'] button {
         background-color: #00d2ff !important;
         color: #000428 !important;
         border: none !important;
         font-weight: bold !important;
     }
-    /* Camera Button specifically */
     [data-testid='stCameraInput'] button {
         background-color: #ff00de !important;
         color: white !important;
@@ -161,7 +157,7 @@ st.markdown("""
         border-radius: 0 10px 10px 0;
     }
 
-    /* 8. NEW FEATURE: BREAKDOWN BARS */
+    /* 8. BREAKDOWN BARS */
     .bar-container {
         margin-bottom: 12px;
     }
@@ -230,24 +226,20 @@ def generate_pdf(label, conf, smooth, advice):
     return pdf.output(dest="S").encode("latin-1")
 
 def plot_heatmap(probs):
-    # Dark Mode Plot
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(10, 3.5))
     
-    # Transparent Background
     fig.patch.set_alpha(0.0)
     ax.patch.set_alpha(0.0)
     
     data = np.array(list(probs.values())).reshape(1, -1)
     
-    # VISIBILITY FIX: Using 'mako' (Deep Blue/Green) - Great contrast with Cyan/White text
     sns.heatmap(data, annot=True, annot_kws={"size": 18, "weight": "bold", "color": "#00d2ff"}, 
                 xticklabels=probs.keys(), yticklabels=[""], cmap="mako", ax=ax, cbar=False)
     
     ax.tick_params(axis='x', colors='white', labelsize=14)
     ax.set_yticks([]) 
     
-    # Add border to plot
     for _, spine in ax.spines.items():
         spine.set_visible(True)
         spine.set_color('#00d2ff')
@@ -264,10 +256,16 @@ def generate_logs(res):
         f"[{t}] DB: Log Saved to CSV"
     ]
 
-# ---------------- LIVE PROCESSOR ----------------
-class LiveProcessor(VideoTransformerBase):
-    def transform(self, frame):
+# ---------------- LIVE PROCESSOR (FIXED: MODERN API) ----------------
+# FIX 1: Inherit from VideoProcessorBase
+class LiveProcessor(VideoProcessorBase):
+    # FIX 2: Use recv() instead of transform()
+    def recv(self, frame):
+        # Convert AV Frame to NumPy
         img = frame.to_ndarray(format="bgr24")
+        
+        # Run Detection
+        # Note: We assume backend is available globally via caching
         res = backend.detect_and_predict(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), enable_logging=False)
         
         if res["found"]:
@@ -275,7 +273,9 @@ class LiveProcessor(VideoTransformerBase):
             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 255), 3)
             label = f"{res['label']} ({int(res['confidence']) }%)"
             cv2.putText(img, label, (x1, y1-15), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        return img
+        
+        # FIX 3: Return AV Frame
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 # ---------------- UI HEADER ----------------
 st.markdown('<div class="main-title">DERMALSCAN</div>', unsafe_allow_html=True)
@@ -327,7 +327,12 @@ elif mode == "🎥 Live Stream":
     st.markdown("### 🔴 Real-Time Feed")
     if camera_type == "Built-in Webcam":
         rtc_configuration = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
-        webrtc_streamer(key="live", video_transformer_factory=LiveProcessor, rtc_configuration=rtc_configuration)
+        # FIX 4: Use video_processor_factory
+        webrtc_streamer(
+            key="live", 
+            video_processor_factory=LiveProcessor, 
+            rtc_configuration=rtc_configuration
+        )
     else:
         st.info(f"Streaming from {ip_cam_url}...")
         video_spot = st.empty()
@@ -373,7 +378,8 @@ if img_np is not None:
                 col1, col2 = st.columns([1, 1])
                 with col1:
                     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                    st.image(img_np, caption="Identified Region", use_column_width=True)
+                    # FIX 5: Updated deprecated use_column_width
+                    st.image(img_np, caption="Identified Region", use_container_width=True)
                     st.markdown('</div>', unsafe_allow_html=True)
                 with col2:
                     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
@@ -405,7 +411,7 @@ if img_np is not None:
                     st.markdown("#### 🧪 Probability Heatmap")
                     st.pyplot(plot_heatmap(res["probabilities"]))
                     
-                    # NEW FEATURE: Detailed Condition Breakdown
+                    # Detailed Condition Breakdown
                     st.markdown("<br>#### 📊 Detailed Condition Breakdown", unsafe_allow_html=True)
                     for key, val in res["probabilities"].items():
                         width = float(val) * 100
@@ -420,9 +426,7 @@ if img_np is not None:
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
-                        
                     st.markdown('</div>', unsafe_allow_html=True)
-
                 # ROW 3: Exports
                 st.markdown("### 📂 Export Data")
                 e1, e2, e3 = st.columns(3)
@@ -433,7 +437,6 @@ if img_np is not None:
                 e2.download_button("📄 PDF Report", pdf_data, "report.pdf", "application/pdf", use_container_width=True)
                 if os.path.exists("inference_logs.csv"):
                     with open("inference_logs.csv", "rb") as f:
-                        e3.download_button("📊 CSV Logs", f, "logs.csv", "text/csv", use_container_width=True)
-                        
+                        e3.download_button("📊 CSV Logs", f, "logs.csv", "text/csv", use_container_width=True)        
             else:
                 st.warning("⚠️ No face detected in the image.")
