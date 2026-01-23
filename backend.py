@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import cv2
 import numpy as np
 import tensorflow as tf
@@ -239,5 +238,4 @@ class DermalScanBackend:
             "Puffy Eyes": ["🧊 Cold compress", "😴 Check sleep schedule", "🧴 Caffeine eye cream"],
             "Wrinkles": ["🧬 Retinol treatment", "🧱 Ceramide moisturizer", "⚡ Peptide serums"]
         }
->>>>>>> 46dc3471f383589b98ed4847bfbe1a9151001303
         return advice.get(condition, ["Consult a dermatologist"])
